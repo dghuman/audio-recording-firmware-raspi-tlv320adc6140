@@ -1,0 +1,21 @@
+[state]
+run = record
+
+[audio_files]
+title = RTMGen
+location = Lab
+artist = DG
+genre = testing
+encoding = flac
+filepath = /home/bukavac/Music/
+
+[settings]
+channel_list = 1,2
+hours = 0.0028
+analoggain = 0
+digitalgain = 0
+turnoff = no
+fileminutes = 0.033
+logfile = /home/bukavac/Desktop/Audio_Software/audio-recording-firmware-raspi-tlv320adc6140/aux/logfile.txt
+wifi_on_during_recording = Yes
+

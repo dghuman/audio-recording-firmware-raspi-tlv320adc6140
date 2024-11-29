@@ -21,15 +21,17 @@ class TLV320ADC:
         self.a_gain_db = [0.0,0.0,0.0,0.0]
         self.d_gain_db = [0.0,0.0,0.0,0.0]
         
-        self.debug=False
+        self.debug=True
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
         self.inv_standby_pin = 4
+        self.piezo_switch_pin = 25
+
         GPIO.setup(self.inv_standby_pin, GPIO.OUT)
+        GPIO.setup(self.piezo_switch_pin, GPIO.OUT, initial=GPIO.HIGH)
         
         self.i2c = SMBus(1)
-
 
         
         self.adc_i2c_address = i2c_address 
@@ -163,8 +165,9 @@ class TLV320ADC:
             print("Addr:",ad," is ",self.addr(ad),"(", hex(self.addr(ad)),")","-> write",msg,"<", hex(msg),"> <",self.bin8(msg),">")
 
         
-        if not self.debug:
-            self.i2c.write_byte_data(self.adc_i2c_address, self.addr(ad), msg)
+        #if not self.debug:
+        self.i2c.write_byte_data(self.adc_i2c_address, self.addr(ad), msg)
+        time.sleep(0.1)
         self.i2c_current[ad]=msg
         if ad in self.i2c_mod:
             del self.i2c_mod[ad]
@@ -244,7 +247,6 @@ class TLV320ADC:
         return
 
 
-
     ## Put ADC in shutdown
     def shutdown(self):
         GPIO.output(self.inv_standby_pin, GPIO.LOW)
@@ -257,7 +259,16 @@ class TLV320ADC:
         time.sleep(.1)
         return
 
+    def piezo_shutdown(self):
+        GPIO.output(self.piezo_switch_pin, GPIO.HIGH)
+        time.sleep(.2)
+        return
 
+    def piezo_startup(self):
+        GPIO.output(self.piezo_switch_pin, GPIO.LOW)
+        time.sleep(.2)
+        return
+    
     def set_sleep(self):
         
         #4. Transition from active mode to sleep mode (again) as required in the system for low-power operation:
@@ -283,18 +294,18 @@ class TLV320ADC:
         return
 
 
-
     def set_communication(self,samplerate = 48):
         
         lookup={
             48 : 0x44,
             96 : 0x54,
             192: 0x64,
-            384: 0x74
+            384: 0x74,
+            768: 0x80
             }
 
 
-        self.i2cwrite("ADCX140_MST_CFG0",0x87) # Enable Master Mode, MCLK is 24.576 MHz
+        self.i2cwrite("ADCX140_MST_CFG0",0x86) # Enable Master Mode, MCLK is 24.576 MHz 0x87, currently at 24 MHz
         self.i2cwrite("ADCX140_MST_CFG1",lookup[samplerate]) #bclk to fsync ratio for clock and sample rate
         self.i2cwrite("ADCX140_GPIO_CFG0",0xa0) #configureGPIO1as MCLK input
         
@@ -348,13 +359,12 @@ class TLV320ADC:
         
         
         for channel in channel_list:
-            self.i2c_bits("ADCX140_DEV_STS0", lookup_power[channel], 1, (power == "ON"))
+            #self.i2c_bits("ADCX140_DEV_STS0", lookup_power[channel], 1, (power == "ON"))
             self.i2c_bits("ADCX140_IN_CH_EN", lookup_enable[channel], 1, enable)
             self.power_status[channel]= (power == "ON")*1
             
         self.i2c_update()
         return
-
 
 
     def set_input(self,channel, in_type="MIC", config="DIFF", coupling="AC", impedance=2.5, dynamic_range_processing="OFF"):
@@ -368,19 +378,10 @@ class TLV320ADC:
         lookup_imp = { 2.5 : 0, 10 : 1, 20 : 2}
         lookup_config = {"DIFF":0, "SINGLE":1, "PDM":2}
         
-        
-        
-        
-        
-        
-        
         base_addr = {1: "ADCX140_CH1_CFG0", 2: "ADCX140_CH2_CFG0",
                      3: "ADCX140_CH3_CFG0", 4: "ADCX140_CH4_CFG0"}
 
         ad = base_addr[channel]
-        
-        
-        
         
         self.i2c_bits(ad, 2, 2, lookup_imp[impedance])
         self.i2c_bits(ad, 4, 1, (coupling == "DC"))
@@ -451,7 +452,10 @@ class TLV320ADC:
                      3: "ADCX140_CH3_CFG3", 4: "ADCX140_CH4_CFG3"}
         
         val = int(calibration_db*10.0 +8.0)
-        self.i2cwrite(base_addr[channel],val)
+        self.i2c_bits(base_addr[channel], 4, 4, val)
+        self.i2c_update()
+        #self.i2cwrite(base_addr[channel],val)
+        
         return (val-8)/10
 
     def set_phase_calibration(self,channel, calibration_cycles = 0.0):
@@ -597,10 +601,25 @@ class TLV320ADC:
 
 
     def get_status(self):
+        msg = self.i2cread("ADCX140_DEV_STS0")
         
-        #ASI_STS to get clock error status
-        
-        return
+        if int(msg) == 0:
+            print("ADC Channels not powered up!")
+            latch = self.i2cread("ADCX140_INT_LTCH0")
+            
+            if int(latch) == int(0b11000000):
+                print("ASI Bus Clock error & PLL LOCK error")
+                return 1
+            
+            if int(latch) == int(0b10000000):
+                print("ASI Bus Clock error")
+                return 1
+            
+            if int(latch) == int(0b01000000):
+                print("PLL LOCK error")
+                return 1
+            
+        return 0
 
 
 
